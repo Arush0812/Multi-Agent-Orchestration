@@ -55,9 +55,12 @@ export function validateAndNormalizePlan(raw: unknown): PlannedStep[] {
   // 1. Validate the top-level envelope
   const envelopeResult = RawPlanSchema.safeParse(raw);
   if (!envelopeResult.success) {
-    const message = envelopeResult.error.errors
-      .map((e) => e.message)
-      .join("; ");
+    // Zod v4 uses `.issues`; fall back to `.errors` for older versions.
+    const issues: Array<{ message: string }> =
+      (envelopeResult.error as unknown as { issues?: Array<{ message: string }> }).issues ??
+      (envelopeResult.error as unknown as { errors?: Array<{ message: string }> }).errors ??
+      [];
+    const message = issues.map((e) => e.message).join("; ");
     throw new PlanValidationError(
       `Invalid plan response: ${message}`,
       raw
@@ -79,7 +82,12 @@ export function validateAndNormalizePlan(raw: unknown): PlannedStep[] {
   for (let i = 0; i < rawSteps.length; i++) {
     const stepResult = PlannedStepSchema.safeParse(rawSteps[i]);
     if (!stepResult.success) {
-      const message = stepResult.error.errors.map((e) => e.message).join("; ");
+      // Zod v4 uses `.issues`; fall back to `.errors` for older versions.
+      const issues: Array<{ message: string }> =
+        (stepResult.error as unknown as { issues?: Array<{ message: string }> }).issues ??
+        (stepResult.error as unknown as { errors?: Array<{ message: string }> }).errors ??
+        [];
+      const message = issues.map((e) => e.message).join("; ");
       throw new PlanValidationError(
         `Invalid step at index ${i}: ${message}`,
         raw
