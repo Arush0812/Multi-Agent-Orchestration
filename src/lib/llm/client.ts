@@ -55,10 +55,12 @@ function isRetryableError(error: unknown): boolean {
       ? error.message.toLowerCase()
       : String(error).toLowerCase();
 
+  // Do NOT retry quota exceeded — it needs minutes to reset, not seconds
+  if (message.includes("quota exceeded") || message.includes("limit: 0")) {
+    return false;
+  }
+
   return (
-    message.includes("429") ||
-    message.includes("quota") ||
-    message.includes("rate") ||
     message.includes("503") ||
     message.includes("500") ||
     message.includes("unavailable")
