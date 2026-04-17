@@ -66,17 +66,18 @@ function buildToolInput(
     case "calculator": {
       // Try to extract a math expression from the description.
       // Look for patterns like "25 + 10", "100 * 5", "(10 + 5) * 2", etc.
-      const mathMatch = step.description.match(/[\d\s\+\-\*\/\(\)\.]+/);
+      const mathMatch = step.description.match(/^[\d\s\+\-\*\/\(\)\.]+$/);
       if (mathMatch) {
-        const expr = mathMatch[0].trim();
-        // Only use it if it looks like a real expression (has at least one operator)
-        if (/[\+\-\*\/]/.test(expr)) {
-          return { expression: expr };
-        }
+        return { expression: step.description.trim() };
       }
-      // Fallback: strip non-math characters and hope for the best
+      // Try to find an inline expression like "25 + 10" within the description
+      const inlineMatch = step.description.match(/[\d]+\s*[\+\-\*\/]\s*[\d\s\+\-\*\/\(\)\.]+/);
+      if (inlineMatch) {
+        return { expression: inlineMatch[0].trim() };
+      }
+      // Last resort: strip all non-math characters
       const cleaned = step.description.replace(/[^0-9+\-*/().\s]/g, "").trim();
-      return { expression: cleaned || step.description };
+      return { expression: cleaned || "0" };
     }
 
     case "web_search":

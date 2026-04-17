@@ -44,6 +44,7 @@ You have access to these tools for step execution:
   - Use for: numerical computations, statistical analysis, data processing
   - Input: mathematical expressions or data sets
   - Output: calculated results and analysis
+  - **IMPORTANT**: For calculator steps, the description MUST be a valid math expression like "25 + 10" or "(100 * 5) / 2". Do NOT write natural language like "Calculate the sum of 25 and 10" — write the actual expression "25 + 10".
 
 ## Step Requirements
 
