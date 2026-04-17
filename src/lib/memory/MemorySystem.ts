@@ -4,15 +4,14 @@
  * Short-term memory: Redis via ioredis, with automatic fallback to an
  * in-memory Map when Redis is unavailable.
  *
- * Long-term memory: Pinecone vector DB with OpenAI embeddings.
+ * Long-term memory: Pinecone vector DB with Gemini embeddings.
  * Clients are initialised lazily on first use to avoid startup failures.
- * If Pinecone or OpenAI are unreachable, operations degrade gracefully.
+ * If Pinecone or Gemini are unreachable, operations degrade gracefully.
  */
 
 import Redis from "ioredis";
 import type { MemoryMetadata, MemoryChunk } from "@/types/index";
 import type { Pinecone, Index } from "@pinecone-database/pinecone";
-import type OpenAI from "openai";
 
 // ---------------------------------------------------------------------------
 // MemorySystem interface (mirrors design.md)
@@ -32,7 +31,7 @@ export interface IMemorySystem {
 export interface LongTermMemoryConfig {
   pineconeApiKey?: string;
   pineconeIndex?: string;
-  openaiApiKey?: string;
+  geminiApiKey?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -48,7 +47,8 @@ export class MemorySystem implements IMemorySystem {
   // Long-term memory: lazily initialised
   private pineconeClient: Pinecone | null = null;
   private pineconeIndex: Index | null = null;
-  private openaiClient: OpenAI | null = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private geminiClient: any | null = null;
   private longTermConfig: LongTermMemoryConfig;
 
   constructor(redisUrl?: string, longTermConfig?: LongTermMemoryConfig) {
@@ -154,23 +154,22 @@ export class MemorySystem implements IMemorySystem {
   }
 
   // -------------------------------------------------------------------------
-  // Long-term memory — Pinecone + OpenAI embeddings
+  // Long-term memory — Pinecone + Gemini embeddings
   // -------------------------------------------------------------------------
 
   /**
-   * Lazily initialise the OpenAI client on first use.
+   * Lazily initialise the Gemini client on first use.
    */
-  private getOpenAIClient(): OpenAI {
-    if (!this.openaiClient) {
-      // Dynamic import to avoid loading the module at startup.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private getGeminiClient(): any {
+    if (!this.geminiClient) {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const OpenAIModule = require("openai");
-      const OpenAIClass = OpenAIModule.default ?? OpenAIModule.OpenAI ?? OpenAIModule;
+      const { GoogleGenerativeAI } = require("@google/generative-ai");
       const apiKey =
-        this.longTermConfig.openaiApiKey ?? process.env.OPENAI_API_KEY;
-      this.openaiClient = new OpenAIClass({ apiKey }) as OpenAI;
+        this.longTermConfig.geminiApiKey ?? process.env.GEMINI_API_KEY;
+      this.geminiClient = new GoogleGenerativeAI(apiKey);
     }
-    return this.openaiClient!;
+    return this.geminiClient;
   }
 
   /**
@@ -195,22 +194,20 @@ export class MemorySystem implements IMemorySystem {
   }
 
   /**
-   * Generate an embedding vector for `text` using OpenAI text-embedding-3-small.
+   * Generate an embedding vector for `text` using Gemini text-embedding-004.
    */
   private async generateEmbedding(text: string): Promise<number[]> {
-    const client = this.getOpenAIClient();
-    const response = await client.embeddings.create({
-      model: "text-embedding-3-small",
-      input: text,
-    });
-    return response.data[0].embedding;
+    const genAI = this.getGeminiClient();
+    const model = genAI.getGenerativeModel({ model: "text-embedding-004" });
+    const result = await model.embedContent(text);
+    return result.embedding.values;
   }
 
   /**
    * Store `content` in Pinecone with the given `metadata`.
    *
-   * Generates an embedding via OpenAI and upserts the vector.
-   * Silently skips (with a warning) if Pinecone or OpenAI are unreachable.
+   * Generates an embedding via Gemini and upserts the vector.
+   * Silently skips (with a warning) if Pinecone or Gemini are unreachable.
    */
   async storeLongTerm(content: string, metadata: MemoryMetadata): Promise<void> {
     try {
@@ -250,7 +247,7 @@ export class MemorySystem implements IMemorySystem {
   /**
    * Retrieve the `topK` most semantically relevant memory chunks for `query`.
    *
-   * Returns an empty array (with a warning) if Pinecone or OpenAI are
+   * Returns an empty array (with a warning) if Pinecone or Gemini are
    * unreachable — graceful degradation per design spec.
    */
   async retrieveRelevant(query: string, topK = 5): Promise<MemoryChunk[]> {

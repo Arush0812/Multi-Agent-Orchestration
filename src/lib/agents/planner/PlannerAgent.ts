@@ -1,11 +1,11 @@
 /**
  * PlannerAgent — decomposes a high-level user query into ordered, atomic steps.
  *
- * Calls OpenAI gpt-4o with a structured JSON prompt, then validates and
+ * Calls Gemini gemini-1.5-pro with a structured JSON prompt, then validates and
  * normalises the response into a `PlannedStep[]` via `validateAndNormalizePlan`.
  */
 
-import type OpenAI from "openai";
+import type { GenerativeModel } from "@google/generative-ai";
 import type { IMemorySystem } from "../../memory/MemorySystem";
 import type { PlannedStep, PlannerContext } from "../../../types";
 import { buildPlannerSystemPrompt, buildPlannerUserPrompt } from "./prompts";
@@ -20,19 +20,27 @@ export interface IPlannerAgent {
 }
 
 // ---------------------------------------------------------------------------
+// Gemini client interface (for testability)
+// ---------------------------------------------------------------------------
+
+export interface IGeminiClient {
+  getGenerativeModel(params: { model: string; generationConfig?: Record<string, unknown> }): GenerativeModel;
+}
+
+// ---------------------------------------------------------------------------
 // Implementation
 // ---------------------------------------------------------------------------
 
 export class PlannerAgent implements IPlannerAgent {
-  private openai: OpenAI;
+  private gemini: IGeminiClient;
   private memory: IMemorySystem;
 
   /**
-   * @param openai  - Injected OpenAI client (not created internally for testability)
+   * @param gemini  - Injected Gemini client (GoogleGenerativeAI instance)
    * @param memory  - MemorySystem used to retrieve relevant prior context
    */
-  constructor(openai: OpenAI, memory: IMemorySystem) {
-    this.openai = openai;
+  constructor(gemini: IGeminiClient, memory: IMemorySystem) {
+    this.gemini = gemini;
     this.memory = memory;
   }
 
@@ -40,11 +48,11 @@ export class PlannerAgent implements IPlannerAgent {
    * Decompose `query` into an ordered array of atomic `PlannedStep`s.
    *
    * 1. Builds system + user prompts from the provided context.
-   * 2. Calls OpenAI gpt-4o with `response_format: { type: "json_object" }`.
+   * 2. Calls Gemini gemini-1.5-pro with responseMimeType: "application/json".
    * 3. Parses the JSON response.
    * 4. Validates and normalises via `validateAndNormalizePlan`.
    *
-   * @throws The raw OpenAI error if the API call fails (caller handles retry).
+   * @throws The raw Gemini error if the API call fails (caller handles retry).
    * @throws `PlanValidationError` if the LLM response cannot be parsed or
    *   fails schema validation.
    */
@@ -52,17 +60,20 @@ export class PlannerAgent implements IPlannerAgent {
     const systemPrompt = buildPlannerSystemPrompt();
     const userPrompt = buildPlannerUserPrompt(query, context.relevantMemory);
 
-    const response = await this.openai.chat.completions.create({
-      model: "gpt-4o",
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userPrompt },
-      ],
-      response_format: { type: "json_object" },
+    const model = this.gemini.getGenerativeModel({
+      model: "gemini-1.5-pro",
+      generationConfig: {
+        responseMimeType: "application/json",
+      },
     });
 
-    const content = response.choices[0].message.content;
-    const parsed: unknown = JSON.parse(content!);
+    const result = await model.generateContent([
+      { text: systemPrompt },
+      { text: userPrompt },
+    ]);
+
+    const content = result.response.text();
+    const parsed: unknown = JSON.parse(content);
 
     return validateAndNormalizePlan(parsed);
   }
@@ -76,18 +87,14 @@ export class PlannerAgent implements IPlannerAgent {
  * Creates a `PlannerAgent` and wraps its `plan` method so that relevant
  * memory is automatically retrieved before planning.
  *
- * The returned object satisfies `IPlannerAgent`: callers pass only the raw
- * `query` string; context is built internally by calling
- * `memory.retrieveRelevant(query, 5)`.
- *
- * @param openai  - Injected OpenAI client
+ * @param gemini  - Injected Gemini client (GoogleGenerativeAI instance)
  * @param memory  - MemorySystem instance
  */
 export function createPlannerAgent(
-  openai: OpenAI,
+  gemini: IGeminiClient,
   memory: IMemorySystem
 ): IPlannerAgent {
-  const agent = new PlannerAgent(openai, memory);
+  const agent = new PlannerAgent(gemini, memory);
 
   return {
     async plan(query: string, context?: PlannerContext): Promise<PlannedStep[]> {

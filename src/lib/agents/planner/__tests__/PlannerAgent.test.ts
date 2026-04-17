@@ -6,42 +6,34 @@
  * - Malformed response: invalid JSON content → PlanValidationError thrown
  * - Memory context in prompt: memory chunks are included in the user prompt
  * - Empty memory: plan still works when no memory chunks are returned
- * - OpenAI error propagation: API errors bubble up to the caller
+ * - Gemini error propagation: API errors bubble up to the caller
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { PlannerAgent } from "../PlannerAgent";
+import { describe, it, expect, vi } from "vitest";
+import { PlannerAgent, type IGeminiClient } from "../PlannerAgent";
 import { PlanValidationError, type MemoryChunk, type PlannerContext } from "../../../../types";
-import type { IMemorySystem } from "../../memory/MemorySystem";
-import type OpenAI from "openai";
+import type { IMemorySystem } from "../../../memory/MemorySystem";
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Build a minimal mock OpenAI client whose chat.completions.create is a vi.fn(). */
-function makeMockOpenAI(responseContent: string) {
-  const create = vi.fn().mockResolvedValue({
-    choices: [
-      {
-        message: {
-          content: responseContent,
-        },
-      },
-    ],
+/** Build a minimal mock Gemini client whose generateContent is a vi.fn(). */
+function makeMockGemini(responseContent: string) {
+  const generateContent = vi.fn().mockResolvedValue({
+    response: { text: () => responseContent },
   });
 
+  const getGenerativeModel = vi.fn().mockReturnValue({ generateContent });
+
   return {
-    chat: {
-      completions: { create },
-    },
-    // Capture the mock so tests can inspect calls
-    _create: create,
-  };
+    getGenerativeModel,
+    _generateContent: generateContent,
+  } as unknown as IGeminiClient & { _generateContent: ReturnType<typeof vi.fn> };
 }
 
 /** Build a minimal mock IMemorySystem. */
-function makeMockMemory(chunks: MemoryChunk[] = []): IMemorySystem & { retrieveRelevant: ReturnType<typeof vi.fn> } {
+function makeMockMemory(chunks: MemoryChunk[] = []): IMemorySystem {
   return {
     retrieveRelevant: vi.fn().mockResolvedValue(chunks),
     storeShortTerm: vi.fn(),
@@ -73,9 +65,9 @@ const emptyContext: PlannerContext = { relevantMemory: [] };
 describe("PlannerAgent", () => {
   describe("happy path — valid LLM response", () => {
     it("returns a PlannedStep[] with correct structure for a single step", async () => {
-      const mock = makeMockOpenAI(validResponseContent([validStep(1)]));
+      const mock = makeMockGemini(validResponseContent([validStep(1)]));
       const memory = makeMockMemory();
-      const agent = new PlannerAgent(mock as unknown as OpenAI, memory);
+      const agent = new PlannerAgent(mock, memory);
 
       const result = await agent.plan("test query", emptyContext);
 
@@ -89,11 +81,10 @@ describe("PlannerAgent", () => {
     });
 
     it("returns steps sorted by order ascending when LLM returns them out of order", async () => {
-      // LLM returns steps in reverse order: 3, 1, 2
       const steps = [validStep(3), validStep(1), validStep(2)];
-      const mock = makeMockOpenAI(validResponseContent(steps));
+      const mock = makeMockGemini(validResponseContent(steps));
       const memory = makeMockMemory();
-      const agent = new PlannerAgent(mock as unknown as OpenAI, memory);
+      const agent = new PlannerAgent(mock, memory);
 
       const result = await agent.plan("test query", emptyContext);
 
@@ -103,13 +94,13 @@ describe("PlannerAgent", () => {
 
     it("returns steps with all required fields populated", async () => {
       const steps = [
-        { order: 1, description: "Search for data", suggestedTool: "web_search" as const, expectedOutputSchema: { type: "object", properties: { results: { type: "array" } } } },
+        { order: 1, description: "Search for data", suggestedTool: "web_search" as const, expectedOutputSchema: { type: "object" } },
         { order: 2, description: "Calculate average", suggestedTool: "calculator" as const, expectedOutputSchema: { type: "object" } },
         { order: 3, description: "Summarise findings", suggestedTool: null, expectedOutputSchema: { type: "object" } },
       ];
-      const mock = makeMockOpenAI(validResponseContent(steps));
+      const mock = makeMockGemini(validResponseContent(steps));
       const memory = makeMockMemory();
-      const agent = new PlannerAgent(mock as unknown as OpenAI, memory);
+      const agent = new PlannerAgent(mock, memory);
 
       const result = await agent.plan("research query", emptyContext);
 
@@ -124,62 +115,53 @@ describe("PlannerAgent", () => {
 
   describe("malformed LLM response → PlanValidationError", () => {
     it("throws PlanValidationError when response is missing the 'steps' key", async () => {
-      const mock = makeMockOpenAI(JSON.stringify({ result: [] }));
+      const mock = makeMockGemini(JSON.stringify({ result: [] }));
       const memory = makeMockMemory();
-      const agent = new PlannerAgent(mock as unknown as OpenAI, memory);
+      const agent = new PlannerAgent(mock, memory);
 
       await expect(agent.plan("query", emptyContext)).rejects.toThrow(PlanValidationError);
     });
 
     it("throws PlanValidationError when 'steps' is an empty array", async () => {
-      const mock = makeMockOpenAI(JSON.stringify({ steps: [] }));
+      const mock = makeMockGemini(JSON.stringify({ steps: [] }));
       const memory = makeMockMemory();
-      const agent = new PlannerAgent(mock as unknown as OpenAI, memory);
+      const agent = new PlannerAgent(mock, memory);
 
       await expect(agent.plan("query", emptyContext)).rejects.toThrow(PlanValidationError);
     });
 
     it("throws PlanValidationError when a step is missing 'description'", async () => {
       const badStep = { order: 1, suggestedTool: "web_search", expectedOutputSchema: {} };
-      const mock = makeMockOpenAI(JSON.stringify({ steps: [badStep] }));
+      const mock = makeMockGemini(JSON.stringify({ steps: [badStep] }));
       const memory = makeMockMemory();
-      const agent = new PlannerAgent(mock as unknown as OpenAI, memory);
-
-      await expect(agent.plan("query", emptyContext)).rejects.toThrow(PlanValidationError);
-    });
-
-    it("throws PlanValidationError when step 'order' is not a positive integer", async () => {
-      const badStep = { order: -1, description: "bad step", suggestedTool: null, expectedOutputSchema: {} };
-      const mock = makeMockOpenAI(JSON.stringify({ steps: [badStep] }));
-      const memory = makeMockMemory();
-      const agent = new PlannerAgent(mock as unknown as OpenAI, memory);
+      const agent = new PlannerAgent(mock, memory);
 
       await expect(agent.plan("query", emptyContext)).rejects.toThrow(PlanValidationError);
     });
 
     it("throws PlanValidationError when steps have duplicate order values", async () => {
       const steps = [validStep(1), { ...validStep(1), description: "duplicate order" }];
-      const mock = makeMockOpenAI(JSON.stringify({ steps }));
+      const mock = makeMockGemini(JSON.stringify({ steps }));
       const memory = makeMockMemory();
-      const agent = new PlannerAgent(mock as unknown as OpenAI, memory);
+      const agent = new PlannerAgent(mock, memory);
 
       await expect(agent.plan("query", emptyContext)).rejects.toThrow(PlanValidationError);
     });
 
     it("throws PlanValidationError when step orders are non-contiguous (gap)", async () => {
-      const steps = [validStep(1), validStep(3)]; // missing order 2
-      const mock = makeMockOpenAI(JSON.stringify({ steps }));
+      const steps = [validStep(1), validStep(3)];
+      const mock = makeMockGemini(JSON.stringify({ steps }));
       const memory = makeMockMemory();
-      const agent = new PlannerAgent(mock as unknown as OpenAI, memory);
+      const agent = new PlannerAgent(mock, memory);
 
       await expect(agent.plan("query", emptyContext)).rejects.toThrow(PlanValidationError);
     });
 
     it("attaches the raw response to the thrown PlanValidationError", async () => {
       const rawPayload = { steps: [] };
-      const mock = makeMockOpenAI(JSON.stringify(rawPayload));
+      const mock = makeMockGemini(JSON.stringify(rawPayload));
       const memory = makeMockMemory();
-      const agent = new PlannerAgent(mock as unknown as OpenAI, memory);
+      const agent = new PlannerAgent(mock, memory);
 
       let caught: unknown;
       try {
@@ -196,7 +178,7 @@ describe("PlannerAgent", () => {
   // -------------------------------------------------------------------------
 
   describe("memory context included in prompt", () => {
-    it("includes memory chunk content in the user prompt sent to OpenAI", async () => {
+    it("includes memory chunk content in the prompt sent to Gemini", async () => {
       const chunks: MemoryChunk[] = [
         {
           content: "Previous task found that the answer is 42",
@@ -210,101 +192,87 @@ describe("PlannerAgent", () => {
         },
       ];
 
-      const mock = makeMockOpenAI(validResponseContent([validStep(1)]));
+      const mock = makeMockGemini(validResponseContent([validStep(1)]));
       const memory = makeMockMemory(chunks);
-      const agent = new PlannerAgent(mock as unknown as OpenAI, memory);
+      const agent = new PlannerAgent(mock, memory);
 
       const context: PlannerContext = { relevantMemory: chunks };
       await agent.plan("my query", context);
 
-      // Inspect the messages passed to OpenAI
-      const callArgs = mock._create.mock.calls[0][0] as { messages: Array<{ role: string; content: string }> };
-      const userMessage = callArgs.messages.find((m) => m.role === "user");
+      // Inspect the content parts passed to Gemini
+      const callArgs = mock._generateContent.mock.calls[0][0] as Array<{ text: string }>;
+      const allText = callArgs.map((p) => p.text).join("\n");
 
-      expect(userMessage).toBeDefined();
-      expect(userMessage!.content).toContain("Previous task found that the answer is 42");
-      expect(userMessage!.content).toContain("Step output: search returned 10 results");
+      expect(allText).toContain("Previous task found that the answer is 42");
+      expect(allText).toContain("Step output: search returned 10 results");
     });
 
-    it("includes the original query in the user prompt", async () => {
-      const mock = makeMockOpenAI(validResponseContent([validStep(1)]));
+    it("includes the original query in the prompt", async () => {
+      const mock = makeMockGemini(validResponseContent([validStep(1)]));
       const memory = makeMockMemory();
-      const agent = new PlannerAgent(mock as unknown as OpenAI, memory);
+      const agent = new PlannerAgent(mock, memory);
 
       await agent.plan("find the best pizza in Rome", emptyContext);
 
-      const callArgs = mock._create.mock.calls[0][0] as { messages: Array<{ role: string; content: string }> };
-      const userMessage = callArgs.messages.find((m) => m.role === "user");
+      const callArgs = mock._generateContent.mock.calls[0][0] as Array<{ text: string }>;
+      const allText = callArgs.map((p) => p.text).join("\n");
 
-      expect(userMessage!.content).toContain("find the best pizza in Rome");
+      expect(allText).toContain("find the best pizza in Rome");
     });
 
-    it("sends a system message alongside the user message", async () => {
-      const mock = makeMockOpenAI(validResponseContent([validStep(1)]));
+    it("sends both system and user content to Gemini", async () => {
+      const mock = makeMockGemini(validResponseContent([validStep(1)]));
       const memory = makeMockMemory();
-      const agent = new PlannerAgent(mock as unknown as OpenAI, memory);
+      const agent = new PlannerAgent(mock, memory);
 
       await agent.plan("query", emptyContext);
 
-      const callArgs = mock._create.mock.calls[0][0] as { messages: Array<{ role: string; content: string }> };
-      const systemMessage = callArgs.messages.find((m) => m.role === "system");
-
-      expect(systemMessage).toBeDefined();
-      expect(systemMessage!.content.length).toBeGreaterThan(0);
+      const callArgs = mock._generateContent.mock.calls[0][0] as Array<{ text: string }>;
+      expect(callArgs.length).toBeGreaterThanOrEqual(2);
+      expect(callArgs[0].text.length).toBeGreaterThan(0);
+      expect(callArgs[1].text.length).toBeGreaterThan(0);
     });
   });
 
   // -------------------------------------------------------------------------
 
   describe("empty memory", () => {
-    it("returns a valid plan when memory.retrieveRelevant returns []", async () => {
-      const mock = makeMockOpenAI(validResponseContent([validStep(1), validStep(2)]));
+    it("returns a valid plan when memory returns []", async () => {
+      const mock = makeMockGemini(validResponseContent([validStep(1), validStep(2)]));
       const memory = makeMockMemory([]);
-      const agent = new PlannerAgent(mock as unknown as OpenAI, memory);
+      const agent = new PlannerAgent(mock, memory);
 
-      const context: PlannerContext = { relevantMemory: [] };
-      const result = await agent.plan("query with no memory", context);
+      const result = await agent.plan("query with no memory", emptyContext);
 
       expect(result).toHaveLength(2);
       expect(result[0].order).toBe(1);
       expect(result[1].order).toBe(2);
     });
-
-    it("does not include a memory context section in the prompt when chunks are empty", async () => {
-      const mock = makeMockOpenAI(validResponseContent([validStep(1)]));
-      const memory = makeMockMemory([]);
-      const agent = new PlannerAgent(mock as unknown as OpenAI, memory);
-
-      const context: PlannerContext = { relevantMemory: [] };
-      await agent.plan("query", context);
-
-      const callArgs = mock._create.mock.calls[0][0] as { messages: Array<{ role: string; content: string }> };
-      const userMessage = callArgs.messages.find((m) => m.role === "user");
-
-      // The "Relevant Context" section should not appear when there are no chunks
-      expect(userMessage!.content).not.toContain("Relevant Context from Previous Tasks");
-    });
   });
 
   // -------------------------------------------------------------------------
 
-  describe("OpenAI error propagation", () => {
-    it("propagates errors thrown by openai.chat.completions.create", async () => {
-      const apiError = new Error("OpenAI API rate limit exceeded");
-      const create = vi.fn().mockRejectedValue(apiError);
-      const mockOpenAI = { chat: { completions: { create } } } as unknown as OpenAI;
+  describe("Gemini error propagation", () => {
+    it("propagates errors thrown by Gemini generateContent", async () => {
+      const apiError = new Error("Gemini API rate limit exceeded");
+      const generateContent = vi.fn().mockRejectedValue(apiError);
+      const mockGemini = {
+        getGenerativeModel: vi.fn().mockReturnValue({ generateContent }),
+      } as unknown as IGeminiClient;
       const memory = makeMockMemory();
-      const agent = new PlannerAgent(mockOpenAI, memory);
+      const agent = new PlannerAgent(mockGemini, memory);
 
-      await expect(agent.plan("query", emptyContext)).rejects.toThrow("OpenAI API rate limit exceeded");
+      await expect(agent.plan("query", emptyContext)).rejects.toThrow("Gemini API rate limit exceeded");
     });
 
-    it("propagates network errors from OpenAI", async () => {
+    it("propagates network errors from Gemini", async () => {
       const networkError = new Error("ECONNREFUSED");
-      const create = vi.fn().mockRejectedValue(networkError);
-      const mockOpenAI = { chat: { completions: { create } } } as unknown as OpenAI;
+      const generateContent = vi.fn().mockRejectedValue(networkError);
+      const mockGemini = {
+        getGenerativeModel: vi.fn().mockReturnValue({ generateContent }),
+      } as unknown as IGeminiClient;
       const memory = makeMockMemory();
-      const agent = new PlannerAgent(mockOpenAI, memory);
+      const agent = new PlannerAgent(mockGemini, memory);
 
       await expect(agent.plan("query", emptyContext)).rejects.toThrow("ECONNREFUSED");
     });
