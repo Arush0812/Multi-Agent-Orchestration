@@ -81,9 +81,15 @@ function buildToolInput(
     }
 
     case "web_search":
-    default:
-      // Strip quotes and clean up the query
-      return { query: step.description.replace(/^["']|["']$/g, "").trim() };
+    default: {
+      // Extract a clean search query from the description
+      // Remove common prefixes like "Search for", "Find", "Look up", etc.
+      const cleaned = step.description
+        .replace(/^(search for|search|find|look up|research|get|fetch|retrieve|query for)\s+/i, "")
+        .replace(/\.$/, "")
+        .trim();
+      return { query: cleaned || step.description };
+    }
   }
 }
 

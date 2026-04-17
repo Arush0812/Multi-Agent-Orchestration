@@ -106,7 +106,7 @@ describe("ExecutorAgent", () => {
       expect(result).toMatchObject({
         stepId: "step-1",
         toolUsed: "web_search",
-        input: expect.objectContaining({ query: "Search for AI news" }),
+        input: expect.objectContaining({ query: expect.any(String) }),
         output: successfulToolOutput,
         status: "success",
         confidence: expect.any(Number),

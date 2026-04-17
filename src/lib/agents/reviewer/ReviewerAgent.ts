@@ -81,6 +81,7 @@ function buildReviewPrompt(
     "",
     "Accept if the output is relevant to the task, matches the expected schema structure, and provides useful information.",
     "Reject if the output is missing, irrelevant, malformed, or does not address the step description.",
+    "NOTE: For web search results, accept both 'result' and 'results' as valid field names — they are equivalent.",
     "The suggestions field is optional — only include it when rejecting with actionable improvement hints.",
   ].join("\n");
 }
@@ -164,9 +165,23 @@ export class ReviewerAgent implements IReviewerAgent {
       };
     }
 
+    // For web_search tool: accept both 'result' and 'results' field names
+    // since DuckDuckGo returns 'result' but schema expects 'results'
+    let outputToValidate = result.output;
+    if (
+      result.toolUsed === "web_search" &&
+      typeof result.output === "object" &&
+      result.output !== null
+    ) {
+      const out = result.output as Record<string, unknown>;
+      if (Array.isArray(out.result) && !out.results) {
+        outputToValidate = { ...out, results: out.result };
+      }
+    }
+
     try {
       const zodSchema = buildZodSchemaFromJSONSchema(step.expectedOutputSchema);
-      const parseResult = zodSchema.safeParse(result.output);
+      const parseResult = zodSchema.safeParse(outputToValidate);
       if (!parseResult.success) {
         return {
           decision: "reject",
