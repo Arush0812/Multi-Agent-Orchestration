@@ -1,9 +1,8 @@
 /**
- * WebSearchTool — searches the web using the Brave Search API.
+ * WebSearchTool — searches the web using DuckDuckGo's free instant answer API.
  *
- * Requires the `BRAVE_SEARCH_API_KEY` environment variable to be set.
- * If the key is missing, returns an empty result with an error message.
- * Network errors and non-200 responses are caught and returned as errors.
+ * No API key required. Uses the DuckDuckGo Instant Answer API which is free
+ * and does not require registration.
  */
 
 import { z } from "zod";
@@ -14,12 +13,10 @@ import type { Tool } from "./ToolRegistry";
 // Schemas
 // ---------------------------------------------------------------------------
 
-/** Zod schema used by ToolRegistry for runtime input validation. */
 const zodInputSchema = z.object({
   query: z.string().min(1),
 });
 
-/** JSON Schema representation of the input (for ToolMetadata / design compliance). */
 const inputSchema = {
   type: "object",
   properties: {
@@ -28,7 +25,6 @@ const inputSchema = {
   required: ["query"],
 } as const;
 
-/** JSON Schema representation of the output. */
 const outputSchema = {
   type: "object",
   properties: {
@@ -37,7 +33,7 @@ const outputSchema = {
 } as const;
 
 // ---------------------------------------------------------------------------
-// Result shape returned inside ToolOutput.result
+// Result shape
 // ---------------------------------------------------------------------------
 
 interface SearchResult {
@@ -47,30 +43,13 @@ interface SearchResult {
 }
 
 // ---------------------------------------------------------------------------
-// Brave Search API response shape (partial)
-// ---------------------------------------------------------------------------
-
-interface BraveWebResult {
-  title?: string;
-  url?: string;
-  description?: string;
-}
-
-interface BraveSearchResponse {
-  web?: {
-    results?: BraveWebResult[];
-    totalEstimatedMatches?: number;
-  };
-}
-
-// ---------------------------------------------------------------------------
 // WebSearchTool implementation
 // ---------------------------------------------------------------------------
 
 export const WebSearchTool: Tool = {
   name: "web_search",
   description:
-    "Search the web for information using the Brave Search API. Returns a list of results with title, URL, and description.",
+    "Search the web for information using DuckDuckGo. Returns a list of results with title, URL, and description.",
   inputSchema,
   outputSchema,
   zodInputSchema,
@@ -78,70 +57,76 @@ export const WebSearchTool: Tool = {
   async execute(input: ToolInput): Promise<ToolOutput> {
     const query = input["query"] as string;
 
-    // Check for API key
-    const apiKey = process.env.BRAVE_SEARCH_API_KEY;
-    if (!apiKey) {
-      return {
-        result: [],
-        metadata: { query },
-        error: "BRAVE_SEARCH_API_KEY not configured",
-      };
-    }
-
-    const url = new URL("https://api.search.brave.com/res/v1/web/search");
-    url.searchParams.set("q", query);
-    url.searchParams.set("count", "10");
-
-    let response: Response;
     try {
-      response = await fetch(url.toString(), {
-        headers: {
-          Accept: "application/json",
-          "Accept-Encoding": "gzip",
-          "X-Subscription-Token": apiKey,
-        },
+      // DuckDuckGo Instant Answer API — free, no key required
+      const url = new URL("https://api.duckduckgo.com/");
+      url.searchParams.set("q", query);
+      url.searchParams.set("format", "json");
+      url.searchParams.set("no_html", "1");
+      url.searchParams.set("skip_disambig", "1");
+
+      const response = await fetch(url.toString(), {
+        headers: { "Accept": "application/json" },
       });
+
+      if (!response.ok) {
+        return {
+          result: [],
+          metadata: { query },
+          error: `Search returned status ${response.status}`,
+        };
+      }
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const data = await response.json() as any;
+
+      const results: SearchResult[] = [];
+
+      // Abstract (main answer)
+      if (data.AbstractText && data.AbstractURL) {
+        results.push({
+          title: data.Heading || query,
+          url: data.AbstractURL,
+          description: data.AbstractText,
+        });
+      }
+
+      // Related topics
+      if (Array.isArray(data.RelatedTopics)) {
+        for (const topic of data.RelatedTopics.slice(0, 8)) {
+          if (topic.Text && topic.FirstURL) {
+            results.push({
+              title: topic.Text.split(" - ")[0] || topic.Text.slice(0, 60),
+              url: topic.FirstURL,
+              description: topic.Text,
+            });
+          }
+        }
+      }
+
+      // If no results from instant answer, return a helpful message
+      if (results.length === 0) {
+        return {
+          result: [{
+            title: `Search results for: ${query}`,
+            url: `https://duckduckgo.com/?q=${encodeURIComponent(query)}`,
+            description: `No instant answer found. Visit DuckDuckGo to see full results for "${query}".`,
+          }],
+          metadata: { query, source: "duckduckgo" },
+        };
+      }
+
+      return {
+        result: results,
+        metadata: { query, totalResults: results.length, source: "duckduckgo" },
+      };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return {
         result: [],
         metadata: { query },
-        error: `Network error: ${message}`,
+        error: `Search failed: ${message}`,
       };
     }
-
-    if (!response.ok) {
-      return {
-        result: [],
-        metadata: { query },
-        error: `Search API returned status ${response.status}: ${response.statusText}`,
-      };
-    }
-
-    let data: BraveSearchResponse;
-    try {
-      data = (await response.json()) as BraveSearchResponse;
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      return {
-        result: [],
-        metadata: { query },
-        error: `Failed to parse search response: ${message}`,
-      };
-    }
-
-    const rawResults: BraveWebResult[] = data.web?.results ?? [];
-    const results: SearchResult[] = rawResults.map((item) => ({
-      title: item.title ?? "",
-      url: item.url ?? "",
-      description: item.description ?? "",
-    }));
-
-    const totalResults = data.web?.totalEstimatedMatches ?? results.length;
-
-    return {
-      result: results,
-      metadata: { query, totalResults },
-    };
   },
 };
