@@ -99,7 +99,7 @@ export async function selectTool(
   const prompt = buildToolSelectionPrompt(step.description, availableTools);
 
   const model = gemini.getGenerativeModel({
-    model: "gemini-2.0-flash",
+    model: "gemini-1.5-flash-8b",
     generationConfig: {
       responseMimeType: "application/json",
     },

@@ -184,7 +184,7 @@ export class ReviewerAgent implements IReviewerAgent {
       const prompt = buildReviewPrompt(step, result, taskQuery);
 
       const model = this.gemini.getGenerativeModel({
-        model: "gemini-2.0-flash",
+        model: "gemini-1.5-flash-8b",
         generationConfig: {
           responseMimeType: "application/json",
         },
