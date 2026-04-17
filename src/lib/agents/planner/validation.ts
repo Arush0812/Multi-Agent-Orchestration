@@ -24,7 +24,7 @@ const PlannedStepSchema = z.object({
     .enum(["web_search", "web_scraper", "calculator"])
     .nullable(),
   expectedOutputSchema: z
-    .record(z.unknown())
+    .record(z.string(), z.unknown())
     .refine((v) => typeof v === "object" && v !== null, {
       message: "Step 'expectedOutputSchema' must be an object",
     }),
