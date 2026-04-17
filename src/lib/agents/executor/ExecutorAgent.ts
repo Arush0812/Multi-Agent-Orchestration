@@ -57,17 +57,32 @@ function buildToolInput(
   step: IStepForExecution
 ): Record<string, unknown> {
   switch (toolName) {
-    case "web_scraper":
-      // Attempt to extract a URL from the description; fall back to the
-      // description itself so the tool can surface a validation error.
-      return { url: step.description };
+    case "web_scraper": {
+      // Extract URL from description if present
+      const urlMatch = step.description.match(/https?:\/\/[^\s]+/);
+      return { url: urlMatch ? urlMatch[0] : step.description };
+    }
 
-    case "calculator":
-      return { expression: step.description };
+    case "calculator": {
+      // Try to extract a math expression from the description.
+      // Look for patterns like "25 + 10", "100 * 5", "(10 + 5) * 2", etc.
+      const mathMatch = step.description.match(/[\d\s\+\-\*\/\(\)\.]+/);
+      if (mathMatch) {
+        const expr = mathMatch[0].trim();
+        // Only use it if it looks like a real expression (has at least one operator)
+        if (/[\+\-\*\/]/.test(expr)) {
+          return { expression: expr };
+        }
+      }
+      // Fallback: strip non-math characters and hope for the best
+      const cleaned = step.description.replace(/[^0-9+\-*/().\s]/g, "").trim();
+      return { expression: cleaned || step.description };
+    }
 
     case "web_search":
     default:
-      return { query: step.description };
+      // Strip quotes and clean up the query
+      return { query: step.description.replace(/^["']|["']$/g, "").trim() };
   }
 }
 
