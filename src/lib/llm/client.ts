@@ -142,19 +142,20 @@ async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
  *                 environment variable, then `GOOGLE_API_KEY`.
  */
 export function createGeminiClient(apiKey?: string): IGeminiClient {
-  const resolvedKey =
+  // Read key lazily so .env.local is loaded before we access it
+  const getKey = () =>
     apiKey ??
     process.env.GEMINI_API_KEY ??
     process.env.GOOGLE_API_KEY ??
     "";
-
-  const sdk = new GoogleGenerativeAI(resolvedKey);
 
   return {
     getGenerativeModel(params: {
       model: string;
       generationConfig?: Record<string, unknown>;
     }) {
+      // Create SDK instance lazily on first model request
+      const sdk = new GoogleGenerativeAI(getKey());
       const model = sdk.getGenerativeModel({
         model: params.model,
         generationConfig: params.generationConfig as
@@ -180,5 +181,6 @@ export function createGeminiClient(apiKey?: string): IGeminiClient {
 /**
  * Default Gemini client singleton.
  * Uses `GEMINI_API_KEY` or `GOOGLE_API_KEY` from the environment.
+ * Reads the key lazily on first use to pick up .env.local values.
  */
 export const geminiClient = createGeminiClient();
