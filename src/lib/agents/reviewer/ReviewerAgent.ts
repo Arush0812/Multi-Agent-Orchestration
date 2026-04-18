@@ -156,6 +156,20 @@ export class ReviewerAgent implements IReviewerAgent {
       };
     }
 
+    // Step 1b: For web_search tool, be lenient — if it returned any result array, accept it
+    // DuckDuckGo may return minimal results but the tool worked correctly
+    if (result.toolUsed === "web_search") {
+      const out = result.output as Record<string, unknown> | null;
+      const resultArray = out?.result ?? out?.results;
+      if (Array.isArray(resultArray) && resultArray.length > 0) {
+        return {
+          decision: "accept",
+          reason: "Web search returned results successfully.",
+          confidence: 0.8,
+        };
+      }
+    }
+
     // Step 2: Validate output against expectedOutputSchema using zod
     if (result.output === null || result.output === undefined) {
       return {

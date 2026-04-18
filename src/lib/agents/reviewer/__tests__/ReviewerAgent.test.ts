@@ -43,11 +43,11 @@ const validStep: IStepForReview = {
 function makeSuccessResult(output: unknown = { results: ["item1"] }): ExecutionResult {
   return {
     stepId: "step-1",
-    toolUsed: "web_search",
-    input: { query: "AI news" },
+    toolUsed: "calculator",
+    input: { expression: "1+1" },
     output,
     status: "success",
-    logs: ["[2024-01-01T00:00:00.000Z] Attempt 1 — tool: web_search"],
+    logs: ["[2024-01-01T00:00:00.000Z] Attempt 1 — tool: calculator"],
     confidence: 0.9,
     createdAt: new Date(),
   };

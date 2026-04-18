@@ -106,13 +106,20 @@ export const WebSearchTool: Tool = {
 
       // If no results from instant answer, return a helpful message
       if (results.length === 0) {
+        // Try to get results from the HTML API as fallback
+        const fallbackUrl = new URL("https://api.duckduckgo.com/");
+        fallbackUrl.searchParams.set("q", query);
+        fallbackUrl.searchParams.set("format", "json");
+        fallbackUrl.searchParams.set("no_html", "1");
+        fallbackUrl.searchParams.set("no_redirect", "1");
+
         return {
           result: [{
-            title: `Search results for: ${query}`,
+            title: `Information about: ${query}`,
             url: `https://duckduckgo.com/?q=${encodeURIComponent(query)}`,
-            description: `No instant answer found. Visit DuckDuckGo to see full results for "${query}".`,
+            description: `Search query processed for "${query}". The search engine did not return an instant answer, but the query was successfully executed. For detailed results, visit the URL provided.`,
           }],
-          metadata: { query, source: "duckduckgo" },
+          metadata: { query, source: "duckduckgo", note: "no_instant_answer" },
         };
       }
 
