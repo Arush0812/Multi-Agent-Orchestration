@@ -1,14 +1,35 @@
 /**
- * Gemini client wrapper with exponential backoff and retry logic.
+ * Grok (xAI) client wrapper with exponential backoff and retry logic.
  *
- * Wraps `@google/generative-ai` SDK's `generateContent` with:
- * - Up to 3 retries on rate-limit (429) and server errors (5xx)
- * - Exponential backoff with jitter: delay = baseDelay * 2^attempt + jitter(0–200ms)
+ * Grok uses an OpenAI-compatible API, so we use the `openai` SDK
+ * pointed at xAI's base URL: https://api.x.ai/v1
+ *
+ * Wraps `chat.completions.create` with:
+ * - Up to 3 retries on server errors (5xx)
+ * - Exponential backoff with jitter
  * - Structured `LLMError` thrown when all retries are exhausted
  */
 
-import { GoogleGenerativeAI } from "@google/generative-ai";
-import type { IGeminiClient } from "../agents/executor/toolSelection";
+import OpenAI from "openai";
+
+// ---------------------------------------------------------------------------
+// IGeminiClient-compatible interface (kept for backward compat with agents)
+// We keep the same interface shape so no agent code needs to change.
+// ---------------------------------------------------------------------------
+
+export interface IGrokClient {
+  getGenerativeModel(params: {
+    model: string;
+    generationConfig?: Record<string, unknown>;
+  }): {
+    generateContent(
+      parts: Array<{ text: string }>
+    ): Promise<{ response: { text(): string } }>;
+  };
+}
+
+// Re-export as IGeminiClient alias so existing imports still work
+export type IGeminiClient = IGrokClient;
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -22,13 +43,8 @@ const MAX_JITTER_MS = 200;
 // Error class
 // ---------------------------------------------------------------------------
 
-/**
- * Thrown when all retry attempts for a Gemini API call are exhausted.
- */
 export class LLMError extends Error {
-  /** Total number of attempts made (including the initial attempt). */
   attempts: number;
-  /** The last error received from the Gemini API. */
   lastError: unknown;
 
   constructor(message: string, attempts: number, lastError: unknown) {
@@ -36,8 +52,6 @@ export class LLMError extends Error {
     this.name = "LLMError";
     this.attempts = attempts;
     this.lastError = lastError;
-
-    // Restore prototype chain (required when extending built-ins in TypeScript).
     Object.setPrototypeOf(this, new.target.prototype);
   }
 }
@@ -46,58 +60,30 @@ export class LLMError extends Error {
 // Retry helpers
 // ---------------------------------------------------------------------------
 
-/**
- * Returns true if the error is retryable (rate limit or server error).
- */
 function isRetryableError(error: unknown): boolean {
   const message =
     error instanceof Error
       ? error.message.toLowerCase()
       : String(error).toLowerCase();
 
-  // Do NOT retry quota exceeded — it needs minutes to reset, not seconds
-  if (message.includes("quota exceeded") || message.includes("limit: 0")) {
-    return false;
-  }
-
+  // Retry on server errors only — not quota/auth errors
   return (
     message.includes("503") ||
     message.includes("500") ||
-    message.includes("unavailable")
+    message.includes("unavailable") ||
+    message.includes("internal server error")
   );
 }
 
-/**
- * Computes the delay for a given attempt using exponential backoff with jitter.
- *
- * delay = baseDelay * 2^attempt + jitter
- * where jitter is a random value in [0, MAX_JITTER_MS).
- *
- * @param attempt - Zero-based attempt index (0 = first retry).
- */
 function computeDelay(attempt: number): number {
   const jitter = Math.random() * MAX_JITTER_MS;
   return BASE_DELAY_MS * Math.pow(2, attempt) + jitter;
 }
 
-/**
- * Sleeps for `ms` milliseconds.
- */
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// ---------------------------------------------------------------------------
-// Wrapped generateContent with retry
-// ---------------------------------------------------------------------------
-
-/**
- * Wraps a `generateContent` call with exponential backoff retry logic.
- *
- * @param fn      - The async function to call (should call `model.generateContent`).
- * @returns The result of `fn` on success.
- * @throws `LLMError` if all retries are exhausted.
- */
 async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
   let lastError: unknown;
 
@@ -109,7 +95,6 @@ async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
 
       const isLast = attempt === MAX_RETRIES;
       if (isLast || !isRetryableError(error)) {
-        // Non-retryable error or final attempt — stop immediately
         break;
       }
 
@@ -120,7 +105,7 @@ async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
 
   const totalAttempts = MAX_RETRIES + 1;
   throw new LLMError(
-    `Gemini API call failed after ${totalAttempts} attempt(s): ${
+    `Grok API call failed after ${totalAttempts} attempt(s): ${
       lastError instanceof Error ? lastError.message : String(lastError)
     }`,
     totalAttempts,
@@ -133,41 +118,58 @@ async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
 // ---------------------------------------------------------------------------
 
 /**
- * Creates a Gemini client that wraps `@google/generative-ai` with retry logic.
+ * Creates a Grok client using xAI's OpenAI-compatible API.
  *
- * The returned object is compatible with the `IGeminiClient` interface used
- * throughout the codebase (PlannerAgent, selectTool, etc.).
+ * The returned object matches the `IGrokClient` interface used throughout
+ * the codebase (PlannerAgent, selectTool, ReviewerAgent, etc.).
  *
- * @param apiKey - Optional Gemini API key. Falls back to `GEMINI_API_KEY`
- *                 environment variable, then `GOOGLE_API_KEY`.
+ * @param apiKey - Optional Grok API key. Falls back to `GROK_API_KEY` env var.
  */
-export function createGeminiClient(apiKey?: string): IGeminiClient {
-  // Read key lazily so .env.local is loaded before we access it
-  const getKey = () =>
-    apiKey ??
-    process.env.GEMINI_API_KEY ??
-    process.env.GOOGLE_API_KEY ??
-    "";
-
+export function createGeminiClient(apiKey?: string): IGrokClient {
   return {
     getGenerativeModel(params: {
       model: string;
       generationConfig?: Record<string, unknown>;
     }) {
-      // Create SDK instance lazily on first model request
-      const sdk = new GoogleGenerativeAI(getKey());
-      const model = sdk.getGenerativeModel({
-        model: params.model,
-        generationConfig: params.generationConfig as
-          | Record<string, unknown>
-          | undefined,
-      });
-
       return {
         async generateContent(
           parts: Array<{ text: string }>
         ): Promise<{ response: { text(): string } }> {
-          return withRetry(() => model.generateContent(parts));
+          return withRetry(async () => {
+            // Read key lazily so .env.local is loaded before we access it
+            const resolvedKey =
+              apiKey ??
+              process.env.GROK_API_KEY ??
+              "";
+
+            const client = new OpenAI({
+              apiKey: resolvedKey,
+              baseURL: "https://api.x.ai/v1",
+            });
+
+            // Combine all parts into a single user message
+            const userContent = parts.map((p) => p.text).join("\n\n");
+
+            // Check if JSON mode is requested
+            const wantsJson =
+              params.generationConfig?.responseMimeType === "application/json";
+
+            const response = await client.chat.completions.create({
+              model: params.model,
+              messages: [{ role: "user", content: userContent }],
+              ...(wantsJson
+                ? { response_format: { type: "json_object" } }
+                : {}),
+            });
+
+            const content = response.choices[0]?.message?.content ?? "";
+
+            return {
+              response: {
+                text: () => content,
+              },
+            };
+          });
         },
       };
     },
@@ -178,9 +180,4 @@ export function createGeminiClient(apiKey?: string): IGeminiClient {
 // Default singleton
 // ---------------------------------------------------------------------------
 
-/**
- * Default Gemini client singleton.
- * Uses `GEMINI_API_KEY` or `GOOGLE_API_KEY` from the environment.
- * Reads the key lazily on first use to pick up .env.local values.
- */
 export const geminiClient = createGeminiClient();

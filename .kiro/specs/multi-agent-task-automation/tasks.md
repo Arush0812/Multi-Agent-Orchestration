@@ -131,7 +131,7 @@ Implement a TypeScript/Next.js multi-agent system with a Planner, Executor, and 
     - Test `PlanValidationError` thrown on malformed LLM response
     - Test memory context is included in prompt
 
-- [ ] 6. Executor Agent and tool selection
+- [x] 6. Executor Agent and tool selection
   - [x] 6.1 Implement `selectTool()` function
     - Create `src/lib/agents/executor/toolSelection.ts`
     - Fast path: return `step.suggestedTool` if it is registered in `ToolRegistry`
@@ -139,7 +139,7 @@ Implement a TypeScript/Next.js multi-agent system with a Planner, Executor, and 
     - Assert selected tool is registered; throw if not
     - _Requirements: executor agent_
 
-  - [ ] 6.2 Implement `ExecutorAgent`
+  - [x] 6.2 Implement `ExecutorAgent`
     - Create `src/lib/agents/executor/ExecutorAgent.ts` implementing the `ExecutorAgent` interface
     - Call `selectTool` to determine tool, invoke via `ToolRegistry`
     - Store result in short-term memory under `task:{taskId}:step:{stepId}`
@@ -147,13 +147,13 @@ Implement a TypeScript/Next.js multi-agent system with a Planner, Executor, and 
     - Catch tool exceptions: set `status: "failure"`, log error in `logs[]`
     - _Requirements: executor agent_
 
-  - [ ] 6.3 Write unit tests for ExecutorAgent
+  - [x] 6.3 Write unit tests for ExecutorAgent
     - Mock `ToolRegistry`; assert `ExecutionResult` shape and log population
     - Test failure path: tool throws → `status: "failure"` in result
     - Test short-term memory is called with correct key
 
-- [ ] 7. Reviewer Agent
-  - [ ] 7.1 Implement `ReviewerAgent`
+- [x] 7. Reviewer Agent
+  - [x] 7.1 Implement `ReviewerAgent`
     - Create `src/lib/agents/reviewer/ReviewerAgent.ts` implementing the `ReviewerAgent` interface
     - Validate `result.output` structure against `step.expectedOutputSchema` using zod
     - Call OpenAI to assess relevance to `taskQuery`; parse `ReviewDecision` from JSON response
@@ -161,13 +161,13 @@ Implement a TypeScript/Next.js multi-agent system with a Planner, Executor, and 
     - Return `ReviewDecision` with `reason`, optional `suggestions`, and `confidence`
     - _Requirements: reviewer agent_
 
-  - [ ] 7.2 Write unit tests for ReviewerAgent
+  - [x] 7.2 Write unit tests for ReviewerAgent
     - Mock step + result pairs; assert `ReviewDecision` correctness
     - Test schema validation failure produces `"reject"` decision
     - Test `decision` is always `"accept"` or `"reject"`
 
-- [ ] 8. Orchestrator and retry logic
-  - [ ] 8.1 Implement `executeWithRetry()`
+- [x] 8. Orchestrator and retry logic
+  - [x] 8.1 Implement `executeWithRetry()`
     - Create `src/lib/orchestrator/retry.ts`
     - Loop up to `maxAttempts` (default 3); call `executor.execute` then `reviewer.review` each iteration
     - On `"accept"`: return result immediately
@@ -176,11 +176,11 @@ Implement a TypeScript/Next.js multi-agent system with a Planner, Executor, and 
     - Persist each attempt as an `Execution` document
     - _Requirements: retry logic_
 
-  - [ ] 8.2 Write property test for `executeWithRetry` termination
+  - [x] 8.2 Write property test for `executeWithRetry` termination
     - **Property: Retry loop termination** — `executeWithRetry` always terminates within `maxAttempts` iterations regardless of reviewer decisions
     - **Validates: retry loop correctness property**
 
-  - [ ] 8.3 Implement `Orchestrator`
+  - [x] 8.3 Implement `Orchestrator`
     - Create `src/lib/orchestrator/Orchestrator.ts` implementing the `Orchestrator` interface
     - Implement `startTask(taskId, query)`: update status → plan → persist steps → execute loop → assemble result
     - Implement `getTaskStatus(taskId)`: query MongoDB for current task state
@@ -189,27 +189,27 @@ Implement a TypeScript/Next.js multi-agent system with a Planner, Executor, and 
     - Emit progress events (SSE-compatible) after each step completes
     - _Requirements: orchestrator_
 
-  - [ ] 8.4 Implement `assembleFinalResult()`
+  - [x] 8.4 Implement `assembleFinalResult()`
     - Create `src/lib/orchestrator/assembly.ts`
     - Accept `taskQuery` and `stepResults[]` (all `status: "success"`, ordered by step `order`)
     - Return `FinalResult` with non-empty `summary`, structured `data`, and full `stepResults`
     - Function must be deterministic: same inputs → structurally equivalent output
     - _Requirements: orchestrator_
 
-  - [ ] 8.5 Write property test for `assembleFinalResult` determinism
+  - [x] 8.5 Write property test for `assembleFinalResult` determinism
     - **Property: Assembly determinism** — `assembleFinalResult` is deterministic: same inputs always produce structurally equivalent outputs
     - **Validates: assembly correctness property**
 
-  - [ ] 8.6 Write unit tests for Orchestrator
+  - [x] 8.6 Write unit tests for Orchestrator
     - Test full happy-path: plan → execute → review accept → completed status
     - Test failure propagation: step fails after max retries → task status `"failed"`
     - Test `abortTask` marks all pending steps as failed
 
-- [ ] 9. Checkpoint — Ensure all unit and property tests pass
+- [x] 9. Checkpoint — Ensure all unit and property tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
 - [ ] 10. Next.js API routes
-  - [ ] 10.1 Implement `POST /api/tasks` route
+  - [x] 10.1 Implement `POST /api/tasks` route
     - Create `src/app/api/tasks/route.ts`
     - Validate request body with zod: `userQuery` non-empty, max 2000 chars
     - Sanitize `userQuery` to prevent prompt injection
@@ -220,13 +220,13 @@ Implement a TypeScript/Next.js multi-agent system with a Planner, Executor, and 
     - Apply Redis-based rate limiting (10 tasks/minute per user)
     - _Requirements: API, security_
 
-  - [ ] 10.2 Implement `GET /api/tasks/[id]` status route
+  - [x] 10.2 Implement `GET /api/tasks/[id]` status route
     - Create `src/app/api/tasks/[id]/route.ts`
     - Call `orchestrator.getTaskStatus(taskId)`
     - Return task with `status`, `steps[]`, and progress fraction
     - _Requirements: API_
 
-  - [ ] 10.3 Implement `GET /api/tasks/[id]/result` SSE route
+  - [x] 10.3 Implement `GET /api/tasks/[id]/result` SSE route
     - Create `src/app/api/tasks/[id]/result/route.ts`
     - Stream step completions to client using Server-Sent Events
     - Return full `FinalResult` when task reaches `"completed"` status
@@ -237,14 +237,14 @@ Implement a TypeScript/Next.js multi-agent system with a Planner, Executor, and 
     - Retry flow test: configure Reviewer mock to reject N times; assert exactly N+1 `Execution` documents created
     - Test rate limiting rejects requests over threshold
 
-- [ ] 11. Frontend UI
-  - [ ] 11.1 Implement task submission form
+- [x] 11. Frontend UI
+  - [x] 11.1 Implement task submission form
     - Create `src/app/page.tsx` with a textarea for `userQuery` and a submit button
     - POST to `/api/tasks` on submit; store returned `taskId` in component state
     - Show loading state while task is pending
     - _Requirements: UI_
 
-  - [ ] 11.2 Implement task progress and result display
+  - [x] 11.2 Implement task progress and result display
     - Create `src/components/TaskProgress.tsx`
     - Connect to SSE endpoint `GET /api/tasks/[id]/result` to receive live step updates
     - Display each step's status, tool used, and output as it completes
@@ -252,26 +252,26 @@ Implement a TypeScript/Next.js multi-agent system with a Planner, Executor, and 
     - Sanitize all rendered output to prevent XSS
     - _Requirements: UI, security_
 
-- [ ] 12. OpenAI error handling and exponential backoff
+- [x] 12. OpenAI error handling and exponential backoff
   - Create `src/lib/openai/client.ts` wrapping the OpenAI SDK
   - Implement exponential backoff with jitter for 429 and 5xx responses (max 3 retries, base delay 1s)
   - If all retries fail, throw a structured error that the caller (Planner/Executor/Reviewer) can catch and mark the step as `"failed"`
   - _Requirements: error handling_
 
-- [ ] 13. Wire all components together
-  - [ ] 13.1 Instantiate and connect all dependencies
+- [x] 13. Wire all components together
+  - [x] 13.1 Instantiate and connect all dependencies
     - Create `src/lib/container.ts` (or use Next.js module singletons)
     - Instantiate `MemorySystem`, `ToolRegistry` (register all three tools), `PlannerAgent`, `ExecutorAgent`, `ReviewerAgent`, `Orchestrator` with all dependencies injected
     - Export a single `orchestrator` singleton for use in API routes
     - _Requirements: all_
 
-  - [ ] 13.2 Configure environment and Docker
+  - [x] 13.2 Configure environment and Docker
     - Create `.env.example` with all required variables: `OPENAI_API_KEY`, `MONGODB_URI`, `REDIS_URL`, `PINECONE_API_KEY`, `PINECONE_INDEX`
     - Create `Dockerfile` and `docker-compose.yml` for local dev (Next.js app + MongoDB + Redis)
     - Add MongoDB indexes: `Task._id`, `Step.taskId+order`, `Execution.stepId`
     - _Requirements: infrastructure_
 
-- [ ] 14. Final checkpoint — Ensure all tests pass
+- [x] 14. Final checkpoint — Ensure all tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
 ## Notes

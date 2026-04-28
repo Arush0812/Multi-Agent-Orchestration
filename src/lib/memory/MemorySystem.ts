@@ -31,7 +31,6 @@ export interface IMemorySystem {
 export interface LongTermMemoryConfig {
   pineconeApiKey?: string;
   pineconeIndex?: string;
-  geminiApiKey?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -47,8 +46,6 @@ export class MemorySystem implements IMemorySystem {
   // Long-term memory: lazily initialised
   private pineconeClient: Pinecone | null = null;
   private pineconeIndex: Index | null = null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private geminiClient: any | null = null;
   private longTermConfig: LongTermMemoryConfig;
 
   constructor(redisUrl?: string, longTermConfig?: LongTermMemoryConfig) {
@@ -154,23 +151,8 @@ export class MemorySystem implements IMemorySystem {
   }
 
   // -------------------------------------------------------------------------
-  // Long-term memory — Pinecone + Gemini embeddings
+  // Long-term memory — Pinecone (embeddings disabled: Grok has no embeddings API yet)
   // -------------------------------------------------------------------------
-
-  /**
-   * Lazily initialise the Gemini client on first use.
-   */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private getGeminiClient(): any {
-    if (!this.geminiClient) {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const { GoogleGenerativeAI } = require("@google/generative-ai");
-      const apiKey =
-        this.longTermConfig.geminiApiKey ?? process.env.GEMINI_API_KEY;
-      this.geminiClient = new GoogleGenerativeAI(apiKey);
-    }
-    return this.geminiClient;
-  }
 
   /**
    * Lazily initialise the Pinecone index on first use.
@@ -194,13 +176,12 @@ export class MemorySystem implements IMemorySystem {
   }
 
   /**
-   * Generate an embedding vector for `text` using Gemini text-embedding-004.
+   * Generate an embedding vector for `text`.
+   * Grok does not currently provide an embeddings API,
+   * so this throws to trigger graceful degradation in callers.
    */
-  private async generateEmbedding(text: string): Promise<number[]> {
-    const genAI = this.getGeminiClient();
-    const model = genAI.getGenerativeModel({ model: "text-embedding-004" });
-    const result = await model.embedContent(text);
-    return result.embedding.values;
+  private async generateEmbedding(_text: string): Promise<number[]> {
+    throw new Error("Embeddings not available: Grok API does not support embeddings yet. Long-term memory is disabled.");
   }
 
   /**
