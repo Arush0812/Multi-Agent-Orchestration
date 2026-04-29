@@ -181,7 +181,7 @@ export class MemorySystem implements IMemorySystem {
    * so this throws to trigger graceful degradation in callers.
    */
   private async generateEmbedding(_text: string): Promise<number[]> {
-    throw new Error("Embeddings not available: Grok API does not support embeddings yet. Long-term memory is disabled.");
+    throw new Error("Embeddings not available: Groq API does not support embeddings yet. Long-term memory is disabled.");
   }
 
   /**

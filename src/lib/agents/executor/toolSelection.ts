@@ -99,7 +99,7 @@ export async function selectTool(
   const prompt = buildToolSelectionPrompt(step.description, availableTools);
 
   const model = gemini.getGenerativeModel({
-    model: "grok-3-fast",
+    model: "llama-3.1-8b-instant",
     generationConfig: {
       responseMimeType: "application/json",
     },

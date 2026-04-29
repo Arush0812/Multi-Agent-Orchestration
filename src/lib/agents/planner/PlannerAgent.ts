@@ -61,7 +61,7 @@ export class PlannerAgent implements IPlannerAgent {
     const userPrompt = buildPlannerUserPrompt(query, context.relevantMemory);
 
     const model = this.gemini.getGenerativeModel({
-      model: "grok-3",
+      model: "llama-3.3-70b-versatile",
       generationConfig: {
         responseMimeType: "application/json",
       },
